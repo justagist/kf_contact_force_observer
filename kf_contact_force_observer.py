@@ -6,14 +6,13 @@ Li, C., Zhang, Z., Xia, G., Xie, X. and Zhu, Q., 2018. Efficient force control l
 
 import numpy as np
 
-
 class SystemModelParams(object):
     """
         In practice, the covariance
         matrices Q and R can automatically be calibrated based on the offline experimental data [1].
         It should be mentioned that the larger the weights of Q are chosen, the more the observer will
         rely on the measurements. Larger diagonal elements in Q result in faster response time of the
-        corresponding estimates, but this also results in increased noise amplification. 
+        corresponding estimates, but this also results in increased noise amplification.
 
         [1] https://ieeexplore.ieee.org/document/7914641/
 
@@ -22,7 +21,6 @@ class SystemModelParams(object):
         :type R: np.ndarray (shape: [6,6])
     """
     def __init__(self,K, Q, R):
-        
         self._K = K # kalman gain
         self._Q = Q # process noise covariance matrix
         self._R = R # measurement noise covariance matrix
@@ -31,15 +29,12 @@ class SystemModelParams(object):
     def use_default_values(cls):
         return cls(K=0.5, Q=np.eye(12), R=np.eye(6))
 
-
-
 def skew(x):
     return np.array([[0, -x[2], x[1]],
                      [x[2], 0, -x[0]],
                      [-x[1], x[0], 0]])
 
 class KalmanContactForceObserver(object):
-
     """
     R_j_i : Rotation matrix of frame j with respect to frame i
     r_ij_k: vector from i to j in frame k
@@ -51,12 +46,16 @@ class KalmanContactForceObserver(object):
     :param m: mass of end-effector
     :param g: gravity vector in world frame
     """
-
-    def __init__(self, R_S_E, R_C_E, R_S_C,
+    def __init__(self, R_E_S, R_C_S,
                  m, r_CS_C, r_CE_C, g=np.array([0.,0.,-9.81]),
                  kalman_params=SystemModelParams.use_default_values()):
 
-        self._R_C_E = R_C_E
+
+        R_S_E = R_E_S.T
+
+        R_C_E = np.dot(R_S_E,R_C_S) # --- not 100% sure
+
+        self._R_S_C = np.dot(R_C_E.T, R_S_E) # --- not 100% sure
 
         self._model_params = kalman_params
 
@@ -69,24 +68,21 @@ class KalmanContactForceObserver(object):
         self._A = np.block([[np.eye(6), np.eye(6)],
                             [np.zeros([6,6]), np.eye(6)]])
 
-        self._H = np.block([[R_S_E,                                                         np.zeros(3,9)],
-                            [np.dot(np.dot(R_C_E,(skew(r_CS_C)-skew(r_CE_C))),R_S_C), R_S_E, np.zeros(3,6)]]) 
+        self._H = np.block([[R_S_E,                                                                np.zeros(3,9)],
+                            [np.dot(np.dot(R_C_E,(skew(r_CS_C)-skew(r_CE_C))),self._R_S_C), R_S_E, np.zeros(3,6)]])
         self._prod_val = np.dot(R_C_E, skew((r_CE_C)))
 
-
-    def get_observations(self, ft_vals, R_W_E):
+    def get_observations(self, ft_vals, R_S_W):
         """
             Get filtered observations by performing one-step Kalman update.
 
             :param ft_vals: measured force-torque readings
             :param R_W_E: rotation matrix describing base frame with respect to end-effector tip E.
-
-            TODO: remove argument for R_W_E, replace with R_S_W (easier to obtain). Can use
-               known rotations to obtain R_W_E and R_W_C for computation
-
+            
         """
+        # R_W_C = np.dot(self._R_C_E.T, R_W_E) # --- not 100% sure
 
-        R_W_C = np.dot(R_W_E, self._R_C_E.T) # --- not 100% sure
+        R_W_C = np.dot(self._R_S_C, R_S_W.T) # --- not 100% sure
 
         D = self._m * np.block([[-R_W_E],
                                 [np.dot(self._prod_val, R_W_C)]])
@@ -106,8 +102,3 @@ class KalmanContactForceObserver(object):
 
         # -- return observation using descretised observation model (eq 5)
         return np.dot(self._H,x) + np.dot(D,self._g) + np.random.normal(0,self._model_params._R)
-
-
-
-
-
